@@ -27,13 +27,15 @@ def get_model_and_losses(cnn, style_img, content_img,
     cnn = copy.deepcopy(cnn)
 
     # build a sequential model consisting of a Normalization layer
-    # then all the layers of the VGG feature network along with ContentLoss and StyleLoss
+    # then all the layers of the VGG feature network along with ContefntLoss and StyleLoss
     # layers in the specified places
 
     # just in order to have an iterable access to or list of content/syle
     # losses
     content_losses = []
     style_losses = []
+
+    conv_counter = 0
 
     # assuming that cnn is a nn.Sequential, so we make a new nn.Sequential
     # to put in modules that are supposed to be activated sequentially
@@ -43,9 +45,26 @@ def get_model_and_losses(cnn, style_img, content_img,
     # as they are vestigial
 
     # normalization = TODO
-    # model = nn.Sequential(normalization)
+    normalization = Normalization()
+    model = nn.Sequential(normalization)
 
-    raise NotImplementedError()
+    for layer in cnn:
+        if type(layer) == nn.Conv2d:
+            conv_counter += 1
+
+        if f'conv_{conv_counter}' in content_layers:
+            content_out = model(content_img).detach()
+            content_loss = ContentLoss(content_out)
+            content_losses.append(content_loss)
+            model.add_module(f'content_{conv_counter}', content_loss)
+
+        if f'conv_{conv_counter}' in style_layers:
+            style_out = model(style_img).detach()
+            style_loss = StyleLoss(style_out)
+            style_losses.append(style_loss)
+            model.add_module(f'style_{conv_counter}', style_loss)
+
+    # raise NotImplementedError()
 
     return model, style_losses, content_losses
 
@@ -71,8 +90,13 @@ def run_optimization(cnn, content_img, style_img, input_img, use_content=True, u
     """Run the image reconstruction, texture synthesis, or style transfer."""
     print('Building the style transfer model..')
     # get your model, style, and content losses
+    model, style_losses, content_losses = get_model_and_losses(cnn, style_img, content_img)
+
+    input_img.requires_grad_(True)
+    model.requires_grad_(False)
 
     # get the optimizer
+    optimizer = get_image_optimizer(input_img)
 
     # run model training, with one weird caveat
     # we recommend you use LBFGS, an algorithm which preconditions the gradient
@@ -87,11 +111,59 @@ def run_optimization(cnn, content_img, style_img, input_img, use_content=True, u
     # compute the loss and it's gradient
     # return the loss
 
+    iter_num = 0
+
+
+
+    def add_loss(losses):
+        loss_sum = .0
+        for loss in losses:
+            loss_sum += loss.loss
+        return loss_sum
+
+    def content_closure():
+        optimizer.zero_grad()
+        model(input_img)
+        sum_content_loss = add_loss(content_losses) * content_weight
+        sum_content_loss.backward()
+
+        nonlocal iter_num
+        iter_num += 1
+        if iter_num % 50 == 0:
+            print(f"iter at {iter_num},  content loss is {sum_content_loss:.6f}")
+
+        return sum_content_loss
+
+    def style_closure():
+        optimizer.zero_grad()
+        model(input_img)
+        sum_content_loss = add_loss(content_losses) * content_weight
+        sum_style_loss = add_loss(style_losses) * style_weight
+        sum_loss = sum_content_loss + sum_style_loss
+        sum_loss.backward()
+
+        nonlocal iter_num
+        iter_num += 1
+        if iter_num % 50 == 0:
+            print(f"iter at {iter_num}, style loss is {sum_content_loss:.6f}, content loss is {sum_style_loss:.6f}")
+
+
+        return sum_content_loss + sum_style_loss
+
+
+    while iter_num < num_steps:
+        if use_content and (not use_style):
+            optimizer.step(content_closure)
+        else:
+            optimizer.step(style_closure)
+
     # one more hint: the images must be in the range [0, 1]
     # but the optimizer doesn't know that
     # so you will need to clamp the img values to be in that range after every step
 
-    raise NotImplementedError()
+    with torch.no_grad():
+        torch.clamp(input_img, min=0, max=1)
+    # raise NotImplementedError()
 
     # make sure to clamp once you are done
 
@@ -119,37 +191,38 @@ def main(style_img_path, content_img_path):
     # we load a pretrained VGG19 model from the PyTorch models library
     # but only the feature extraction part (conv layers)
     # and configure it for evaluation
-    # cnn = models.vgg19(pretrained=True).features.to(device).eval()
+    cnn = models.vgg19(pretrained=True).features.to(device).eval()
 
+    print(content_img.size(), "size")
     # image reconstruction
     print("Performing Image Reconstruction from white noise initialization")
-    # input_img = random noise of the size of content_img on the correct device
-    # output = reconstruct the image from the noise
+    input_img = torch.randn(content_img.size()).to(device)# random noise of the size of content_img on the correct device
+    output = run_optimization(cnn, content_img, style_img, input_img,  use_style=False, use_content=True)# reconstruct the image from the noise
 
     plt.figure()
     imshow(output, title='Reconstructed Image')
 
     # texture synthesis
-    print("Performing Texture Synthesis from white noise initialization")
-    # input_img = random noise of the size of content_img on the correct device
-    # output = synthesize a texture like style_image
-
-    plt.figure()
-    imshow(output, title='Synthesized Texture')
+    # print("Performing Texture Synthesis from white noise initialization")
+    # input_img = torch.randn(content_img.size()).to(device) # random noise of the size of content_img on the correct device
+    # output = run_optimization(cnn, content_img, style_img, input_img,  use_style=True, use_content=True, num_steps=1000) #synthesize a texture like style_image
+    #
+    # plt.figure()
+    # imshow(output, title='Synthesized Texture')
 
     # style transfer
     # input_img = random noise of the size of content_img on the correct device
     # output = transfer the style from the style_img to the content image
 
-    plt.figure()
-    imshow(output, title='Output Image from noise')
+    # plt.figure()
+    # imshow(output, title='Output Image from noise')
 
     print("Performing Style Transfer from content image initialization")
-    # input_img = content_img.clone()
-    # output = transfer the style from the style_img to the content image
+    input_img = content_img.clone()
+    output = run_optimization(cnn, content_img, style_img, input_img,  use_style=True, use_content=True, num_steps=1000)# transfer the style from the style_img to the content image
 
     plt.figure()
-    imshow(output, title='Output Image from noise')
+    imshow(output, title='Output Image from content img')
 
     plt.ioff()
     plt.show()
