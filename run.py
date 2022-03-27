@@ -6,6 +6,9 @@ import copy
 import sys
 from utils import load_image, Normalization, device, imshow, get_image_optimizer
 from style_and_content import ContentLoss, StyleLoss
+from torchvision.transforms import functional as F
+from torchvision.transforms import RandomCrop
+
 
 
 """A ``Sequential`` module contains an ordered list of child modules. For
@@ -35,7 +38,6 @@ def get_model_and_losses(cnn, style_img, content_img,
     content_losses = []
     style_losses = []
 
-    conv_counter = 0
 
     # assuming that cnn is a nn.Sequential, so we make a new nn.Sequential
     # to put in modules that are supposed to be activated sequentially
@@ -45,27 +47,40 @@ def get_model_and_losses(cnn, style_img, content_img,
     # as they are vestigial
 
     # normalization = TODO
-    normalization = Normalization()
+    normalization = Normalization().to(device)
     model = nn.Sequential(normalization)
 
-    for layer in cnn:
-        if type(layer) == nn.Conv2d:
-            conv_counter += 1
+    layer_counter = 0
 
-        if f'conv_{conv_counter}' in content_layers:
+    for layer in cnn:
+        layer_counter += 1
+        if type(layer) == nn.ReLU:
+            model.add_module(f'ReLU{layer_counter}', nn.ReLU(inplace=False))
+
+        else:
+            model.add_module(f'layer{layer_counter}', layer)
+
+        if f'conv_{layer_counter}' in content_layers:
             content_out = model(content_img).detach()
             content_loss = ContentLoss(content_out)
             content_losses.append(content_loss)
-            model.add_module(f'content_{conv_counter}', content_loss)
+            model.add_module(f'content_loss_{layer_counter}', content_loss)
 
-        if f'conv_{conv_counter}' in style_layers:
+        if f'conv_{layer_counter}' in style_layers:
             style_out = model(style_img).detach()
             style_loss = StyleLoss(style_out)
             style_losses.append(style_loss)
-            model.add_module(f'style_{conv_counter}', style_loss)
+            model.add_module(f'style_loss_{layer_counter}', style_loss)
+
+    cut_index = 0
+    for i in range(len(model)):
+        if type(model[i]) == ContentLoss or type(model[i]) == StyleLoss:
+            cut_index = i
+
+    model = model[:(cut_index+1)]
 
     # raise NotImplementedError()
-
+    print(model)
     return model, style_losses, content_losses
 
 
@@ -113,8 +128,6 @@ def run_optimization(cnn, content_img, style_img, input_img, use_content=True, u
 
     iter_num = 0
 
-
-
     def add_loss(losses):
         loss_sum = .0
         for loss in losses:
@@ -122,6 +135,8 @@ def run_optimization(cnn, content_img, style_img, input_img, use_content=True, u
         return loss_sum
 
     def content_closure():
+        with torch.no_grad():
+            input_img.clamp_(0, 1)
         optimizer.zero_grad()
         model(input_img)
         sum_content_loss = add_loss(content_losses) * content_weight
@@ -135,6 +150,8 @@ def run_optimization(cnn, content_img, style_img, input_img, use_content=True, u
         return sum_content_loss
 
     def style_closure():
+        with torch.no_grad():
+            input_img.clamp_(0, 1)
         optimizer.zero_grad()
         model(input_img)
         sum_content_loss = add_loss(content_losses) * content_weight
@@ -162,9 +179,7 @@ def run_optimization(cnn, content_img, style_img, input_img, use_content=True, u
     # so you will need to clamp the img values to be in that range after every step
 
     with torch.no_grad():
-        torch.clamp(input_img, min=0, max=1)
-    # raise NotImplementedError()
-
+        input_img.clamp_(0, 1)
     # make sure to clamp once you are done
 
     return input_img
@@ -178,6 +193,36 @@ def main(style_img_path, content_img_path):
     # interative MPL
     plt.ion()
 
+    ## implement cropping
+    content_width, content_height = F.get_image_size(content_img)
+    style_width, style_height = F.get_image_size(style_img)
+
+    width_ratio = style_width / content_width
+    height_ratio = style_height / content_height
+    style_ratio = style_height / style_width
+
+    if width_ratio >= 1 and height_ratio >= 1:
+        pass
+    elif width_ratio < 1 and height_ratio >= 1:
+        new_width = content_width
+        new_height = int(new_width * style_ratio) + 1
+        style_img = F.resize(style_img, (new_height, new_width))
+    elif width_ratio >= 1 and height_ratio < 1:
+        new_height = content_height
+        new_width = int(new_height / style_ratio) + 1
+        style_img = F.resize(style_img, (new_height, new_width))
+    else:
+        ratio = min(width_ratio, height_ratio)
+        new_height = int(style_height / ratio) + 1
+        new_width = int(style_width / ratio) + 1
+        style_img = F.resize(style_img, (new_height, new_width))
+
+    # crop
+    top, left, height, width = RandomCrop.get_params(style_img, (content_height, content_width))
+    style_img = F.crop(style_img, top=top, left=left, height=height, width=width)
+
+    print(style_img.size())
+    print(content_img.size())
     assert style_img.size() == content_img.size(), \
         "we need to import style and content images of the same size"
 
@@ -203,12 +248,12 @@ def main(style_img_path, content_img_path):
     imshow(output, title='Reconstructed Image')
 
     # texture synthesis
-    # print("Performing Texture Synthesis from white noise initialization")
-    # input_img = torch.randn(content_img.size()).to(device) # random noise of the size of content_img on the correct device
-    # output = run_optimization(cnn, content_img, style_img, input_img,  use_style=True, use_content=True, num_steps=1000) #synthesize a texture like style_image
-    #
-    # plt.figure()
-    # imshow(output, title='Synthesized Texture')
+    print("Performing Texture Synthesis from white noise initialization")
+    input_img = torch.randn(content_img.size()).to(device) # random noise of the size of content_img on the correct device
+    output = run_optimization(cnn, content_img, style_img, input_img,  use_style=False, use_content=True) #synthesize a texture like style_image
+
+    plt.figure()
+    imshow(output, title='Synthesized Texture')
 
     # style transfer
     # input_img = random noise of the size of content_img on the correct device
@@ -219,7 +264,7 @@ def main(style_img_path, content_img_path):
 
     print("Performing Style Transfer from content image initialization")
     input_img = content_img.clone()
-    output = run_optimization(cnn, content_img, style_img, input_img,  use_style=True, use_content=True, num_steps=1000)# transfer the style from the style_img to the content image
+    output = run_optimization(cnn, content_img, style_img, input_img,  use_style=True, use_content=True)# transfer the style from the style_img to the content image
 
     plt.figure()
     imshow(output, title='Output Image from content img')

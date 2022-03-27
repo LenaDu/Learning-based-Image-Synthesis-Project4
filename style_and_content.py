@@ -105,11 +105,12 @@ class StyleLoss(nn.Module):
         # self.target = TODO
         # raise NotImplementedError()
         self.target = gram_matrix(target_feature).detach()
+        self.mse = nn.MSELoss()
 
     def forward(self, input):
         # need to cache the appropriate loss value in self.loss
         # self.loss = TODO
         # raise NotImplementedError()
         G = gram_matrix(input)
-        self.loss = F.mse_loss(G, self.target)
+        self.loss = self.mse(G, self.target)
         return input
