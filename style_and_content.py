@@ -83,12 +83,12 @@ def gram_matrix(activations):
     # (c,d)=dimensions of a f. map (N=c*d)
     # raise NotImplementedError()
     feature = activations.view(a*b, c*d)
-    G = torch.mm(feature, feature.t())
-    G = G.div(a*b*c*d)
+    gm = torch.mm(feature, feature.t())
     # 'normalize' the values of the gram matrix
     # by dividing by the number of element in each feature maps.
+    gm = gm.div(a*b*c*d)
 
-    return G
+    return gm
 
 
 """Now the style loss module looks almost exactly like the content loss
@@ -111,6 +111,6 @@ class StyleLoss(nn.Module):
         # need to cache the appropriate loss value in self.loss
         # self.loss = TODO
         # raise NotImplementedError()
-        G = gram_matrix(input)
-        self.loss = self.mse(G, self.target)
+        gm = gram_matrix(input)
+        self.loss = self.mse(gm, self.target)
         return input
