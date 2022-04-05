@@ -8,6 +8,7 @@ import os
 import time
 from utils import load_image, Normalization, device, imshow, get_image_optimizer
 from style_and_content import ContentLoss, StyleLoss
+from models import CycleGenerator
 from torchvision.transforms import functional as F
 from torchvision.transforms import RandomCrop
 
@@ -101,6 +102,8 @@ between 0 to 1 each time the network is run.
 
 """
 
+def run_optimization_feedforward():
+    pass
 
 def run_optimization(cnn, content_img, style_img, input_img, use_content=True, use_style=True, num_steps=300,
                      style_weight=1000000, content_weight=1):
@@ -343,18 +346,18 @@ def main(style_img_path, content_img_path, output_dir):
     # plt.savefig(f"{output_dir}/texture_image(noise2)_{style_img_name}_{content_img_name}_{comment}.png",
     #             bbox_inches='tight')
 
-    # print("Performing Texture Synthesis from white noise initialization")
-    # input_img = torch.randn(content_img.size()).to(device) # random noise of the size of content_img on the correct device
-    # output = run_optimization(cnn, input_img, style_img, input_img,  use_style=True, use_content=True) #synthesize a texture like style_image
-    #
-    # plt.figure()
-    # plt.axis('off')
-    # imshow(output, title='Synthesized Texture')
-    # plt.savefig(f"{output_dir}/texture_image_{style_img_name}_{content_img_name}_{comment}.png", bbox_inches='tight')
+    print("Performing Texture Synthesis from white noise initialization")
+    input_img = torch.randn(content_img.size()).to(device) # random noise of the size of content_img on the correct device
+    output = run_optimization(cnn, input_img, style_img, input_img,  use_style=True, use_content=True) #synthesize a texture like style_image
 
-    # ################################
-    # #    Style Transfer (noise)    #
-    # ################################
+    plt.figure()
+    plt.axis('off')
+    imshow(output, title='Synthesized Texture')
+    plt.savefig(f"{output_dir}/texture_image_{style_img_name}_{content_img_name}_{comment}.png", bbox_inches='tight')
+
+    ################################
+    #    Style Transfer (noise)    #
+    ################################
     # style transfer
     input_img = torch.randn(content_img.size()).to(device) # noise of the size of content_img on the correct device
     start_time = time.time()
