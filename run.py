@@ -6,9 +6,12 @@ import copy
 import sys
 import os
 import time
+import torch.optim as optim
+import imageio
+from torchvision.utils import save_image
 from utils import load_image, Normalization, device, imshow, get_image_optimizer
-from style_and_content import ContentLoss, StyleLoss
-from models import CycleGenerator
+from style_and_content import ContentLoss, StyleLoss, gram_matrix
+from models import CycleGenerator, PatchDiscriminator
 from torchvision.transforms import functional as F
 from torchvision.transforms import RandomCrop
 
@@ -23,7 +26,7 @@ module that has content loss and style loss modules correctly inserted.
 """
 
 # desired depth layers to compute style/content losses :
-content_layers_default = ['conv_4']
+content_layers_default = ['conv_7']
 style_layers_default = ['conv_1', 'conv_3', 'conv_5', 'conv_7', 'conv_9']
 
 
@@ -97,13 +100,9 @@ We still have one final constraint to address. The network may try to
 optimize the input with values that exceed the 0 to 1 tensor range for
 the image. We can address this by correcting the input values to be
 between 0 to 1 each time the network is run.
-
-
-
 """
 
-def run_optimization_feedforward():
-    pass
+
 
 def run_optimization(cnn, content_img, style_img, input_img, use_content=True, use_style=True, num_steps=300,
                      style_weight=1000000, content_weight=1):
@@ -164,6 +163,7 @@ def run_optimization(cnn, content_img, style_img, input_img, use_content=True, u
         sum_loss = sum_content_loss + sum_style_loss
         sum_loss.backward()
 
+
         nonlocal iter_num
         iter_num += 1
         if iter_num % 50 == 0:
@@ -178,7 +178,6 @@ def run_optimization(cnn, content_img, style_img, input_img, use_content=True, u
             optimizer.step(content_closure)
         else:
             optimizer.step(style_closure)
-
     # one more hint: the images must be in the range [0, 1]
     # but the optimizer doesn't know that
     # so you will need to clamp the img values to be in that range after every step
@@ -198,7 +197,7 @@ def main(style_img_path, content_img_path, output_dir):
     style_img = load_image(style_img_path)
     content_img = load_image(content_img_path)
     style_img_name = style_img_path.split('/')[-1].split('.')[0]
-    content_img_name = style_img_path.split('/')[-1].split('.')[0]
+    content_img_name = content_img_path.split('/')[-1].split('.')[0]
     comment = f'conv1+3+5+7+9_s{style_weight:06d}_c{content_weight:1d}'
 
     # interative MPL
@@ -245,59 +244,62 @@ def main(style_img_path, content_img_path, output_dir):
     plt.figure()
     plt.axis('off')
     imshow(style_img, title='Style Image')
-    plt.savefig(f"{output_dir}/style_image_{style_img_name}_{content_img_name}_{comment}.png", bbox_inches='tight')
+    # plt.savefig(f"{output_dir}/style_image_{style_img_name}_{content_img_name}_{comment}.png", bbox_inches='tight')
 
     plt.figure()
     plt.axis('off')
     imshow(content_img, title='Content Image')
-    plt.savefig(f"{output_dir}/content_image_{style_img_name}_{content_img_name}_{comment}.png", bbox_inches='tight')
+    # plt.savefig(f"{output_dir}/content_image_{style_img_name}_{content_img_name}_{comment}.png", bbox_inches='tight')
 
     # we load a pretrained VGG19 model from the PyTorch models library
     # but only the feature extraction part (conv layers)
     # and configure it for evaluation
     cnn = models.vgg19(pretrained=True).features.to(device).eval()
+    # generator = CycleGenerator()
+    # generator = generator.features.to(device).eval()
 
     print(content_img.size(), "size")
     # image reconstruction
     print("Performing Image Reconstruction from white noise initialization")
 
+
     ################################
     #        Reconstruction        #
     ################################
 
-    ######################## Noise 1 #######################
-    # input_img = torch.randn(content_img.size()).to(device)# random noise of the size of content_img on the correct device
+    ###################### Noise 1 #######################
+    input_img = torch.randn(content_img.size()).to(device)# random noise of the size of content_img on the correct device
 
-    # plt.figure()
-    # plt.axis('off')
-    # imshow(input_img, title='noise1')
+    plt.figure()
+    plt.axis('off')
+    imshow(input_img, title='noise1')
     # plt.savefig(f"{output_dir}/noise1_{style_img_name}_{content_img_name}_{comment}.png", bbox_inches='tight')
 
-    # output = run_optimization(cnn, content_img, style_img, input_img,  use_style=False, use_content=True)# reconstruct the image from the noise
+    output = run_optimization(cnn, content_img, style_img, input_img,  use_style=False, use_content=True)# reconstruct the image from the noise
 
 
-    # plt.figure()
-    # plt.axis('off')
-    # imshow(output, title='Reconstructed Image(noise1)')
-    # plt.savefig(f"{output_dir}/reconstructed_image(noise1)_{style_img_name}_{content_img_name}_{comment}.png", bbox_inches='tight')
+    plt.figure()
+    plt.axis('off')
+    imshow(output, title='Reconstructed Image(noise1)')
+    plt.savefig(f"{output_dir}/reconstructed_image(noise1)_{style_img_name}_{content_img_name}_{comment}.png", bbox_inches='tight')
 
 
-    ######################## Noise 2 #######################
-    # input_img = torch.randn(content_img.size()).to(device)# random noise of the size of content_img on the correct device
-    #
-    # plt.figure()
-    # plt.axis('off')
-    # imshow(input_img, title='noise2')
-    # plt.savefig(f"{output_dir}/noise2_{style_img_name}_{content_img_name}_{comment}.png", bbox_inches='tight')
+    ####################### Noise 2 #######################
+    input_img = torch.randn(content_img.size()).to(device)# random noise of the size of content_img on the correct device
 
-    # output = run_optimization(cnn, content_img, style_img, input_img,  use_style=False, use_content=True)# reconstruct the image from the noise
+    plt.figure()
+    plt.axis('off')
+    imshow(input_img, title='noise2')
+    plt.savefig(f"{output_dir}/noise2_{style_img_name}_{content_img_name}_{comment}.png", bbox_inches='tight')
 
-    # plt.figure()
-    # plt.axis('off')
-    # imshow(output, title='Reconstructed Image(noise2)')
-    # plt.savefig(f"{output_dir}/reconstructed_image(noise2)_{style_img_name}_{content_img_name}_{comment}.png", bbox_inches='tight')
+    output = run_optimization(cnn, content_img, style_img, input_img,  use_style=False, use_content=True)# reconstruct the image from the noise
 
-    ######################## Noise #######################
+    plt.figure()
+    plt.axis('off')
+    imshow(output, title='Reconstructed Image(noise2)')
+    plt.savefig(f"{output_dir}/reconstructed_image(noise2)_{style_img_name}_{content_img_name}_{comment}.png", bbox_inches='tight')
+
+    # ####################### Noise #######################
     # input_img = torch.randn(content_img.size()).to(device)# random noise of the size of content_img on the correct device
     # output = run_optimization(cnn, content_img, style_img, input_img,  use_style=False, use_content=True)# reconstruct the image from the noise
     #
@@ -311,40 +313,40 @@ def main(style_img_path, content_img_path, output_dir):
     ################################
     # texture
 
-    # print("Performing Texture Synthesis from white noise initialization")
-    #
-    # ######################## Noise 1 #######################
-    # input_img = torch.randn(content_img.size()).to(device) # random noise of the size of content_img on the correct device
-    #
-    # plt.figure()
-    # plt.axis('off')
-    # imshow(input_img, title='noise1')
-    # plt.savefig(f"{output_dir}/noise1_{style_img_name}_{content_img_name}_{comment}.png", bbox_inches='tight')
-    #
-    # output = run_optimization(cnn, input_img, style_img, input_img,  use_style=True, use_content=True) #synthesize a texture like style_image
-    #
-    # plt.figure()
-    # plt.axis('off')
-    # imshow(output, title='Synthesized Texture(noise1)')
-    # plt.savefig(f"{output_dir}/texture_image(noise1)_{style_img_name}_{content_img_name}_{comment}.png", bbox_inches='tight')
-    #
-    # ######################## Noise 2 #######################
-    #
-    # input_img = torch.randn(content_img.size()).to(device)  # random noise of the size of content_img on the correct device
-    #
-    # plt.figure()
-    # plt.axis('off')
-    # imshow(input_img, title='noise2')
-    # plt.savefig(f"{output_dir}/noise2_{style_img_name}_{content_img_name}_{comment}.png", bbox_inches='tight')
-    #
-    # output = run_optimization(cnn, input_img, style_img, input_img, use_style=True,
-    #                           use_content=True)  # synthesize a texture like style_image
-    #
-    # plt.figure()
-    # plt.axis('off')
-    # imshow(output, title='Synthesized Texture(noise2)')
-    # plt.savefig(f"{output_dir}/texture_image(noise2)_{style_img_name}_{content_img_name}_{comment}.png",
-    #             bbox_inches='tight')
+    print("Performing Texture Synthesis from white noise initialization")
+
+    ######################## Noise 1 #######################
+    input_img = torch.randn(content_img.size()).to(device) # random noise of the size of content_img on the correct device
+
+    plt.figure()
+    plt.axis('off')
+    imshow(input_img, title='noise1')
+    plt.savefig(f"{output_dir}/noise1_{style_img_name}_{content_img_name}_{comment}.png", bbox_inches='tight')
+
+    output = run_optimization(cnn, input_img, style_img, input_img,  use_style=True, use_content=True) #synthesize a texture like style_image
+
+    plt.figure()
+    plt.axis('off')
+    imshow(output, title='Synthesized Texture(noise1)')
+    plt.savefig(f"{output_dir}/texture_image(noise1)_{style_img_name}_{content_img_name}_{comment}.png", bbox_inches='tight')
+
+    ######################## Noise 2 #######################
+
+    input_img = torch.randn(content_img.size()).to(device)  # random noise of the size of content_img on the correct device
+
+    plt.figure()
+    plt.axis('off')
+    imshow(input_img, title='noise2')
+    plt.savefig(f"{output_dir}/noise2_{style_img_name}_{content_img_name}_{comment}.png", bbox_inches='tight')
+
+    output = run_optimization(cnn, input_img, style_img, input_img, use_style=True,
+                              use_content=True)  # synthesize a texture like style_image
+
+    plt.figure()
+    plt.axis('off')
+    imshow(output, title='Synthesized Texture(noise2)')
+    plt.savefig(f"{output_dir}/texture_image(noise2)_{style_img_name}_{content_img_name}_{comment}.png",
+                bbox_inches='tight')
 
     print("Performing Texture Synthesis from white noise initialization")
     input_img = torch.randn(content_img.size()).to(device) # random noise of the size of content_img on the correct device
@@ -372,25 +374,44 @@ def main(style_img_path, content_img_path, output_dir):
 
     imshow(output, title='Output Image from noise')
     plt.savefig(f"{output_dir}/output_from_noise_{style_img_name}_{content_img_name}_{comment}.png", bbox_inches='tight')
-    #
-    #
-    # ################################
-    # #    Style Transfer (image)    #
-    # ################################
+
+
+    ################################
+    #    Style Transfer (image)    #
+    ################################
     print("Performing Style Transfer from content image initialization")
     input_img = content_img.clone()
     start_time = time.time()
-    output = run_optimization(cnn, content_img, style_img, input_img,  use_style=True, use_content=True, style_weight=style_weight, content_weight=content_weight)# transfer the style from the style_img to the content image
+    output = run_optimization(cnn, content_img, style_img, input_img,  use_style=True, use_content=True, style_weight=style_weight,
+                              content_weight=content_weight, num_steps=500)# transfer the style from the style_img to the content image
     image_time = time.time() - start_time
 
     plt.figure()
     plt.axis('off')
     # plt.figtext(0.25, 0, f'style_weight: {style_weight}, content_weight:{content_weight}')
 
+    # plt.figtext(0.25, 0, f'time: {image_time}')
+
+    imshow(output, title='Output Image from content img(Original)')
+    plt.savefig(f"{output_dir}/output_from_content_{style_img_name}_{content_img_name}_{comment}.png", bbox_inches='tight')
+
+    ################################
+    # Style Transfer (feedforward) #
+    ################################
+    # print("Performing Style Transfer from content image initialization")
+    # input_img = content_img.clone()
+    # start_time = time.time()
+    # output = run_optimization_feedforward(generator, content_img, style_img, input_img, num_steps=1200)# transfer the style from the style_img to the content image
+    # image_time = time.time() - start_time
+
+    plt.figure()
+    plt.axis('off')
+    plt.figtext(0.25, 0, f'style_weight: {style_weight}, content_weight:{content_weight}')
     plt.figtext(0.25, 0, f'time: {image_time}')
 
-    imshow(output, title='Output Image from content img')
+    imshow(output, title='Output Image from content img(Feedforward)')
     plt.savefig(f"{output_dir}/output_from_content_{style_img_name}_{content_img_name}_{comment}.png", bbox_inches='tight')
+
 
     plt.ioff()
     plt.axis('off')

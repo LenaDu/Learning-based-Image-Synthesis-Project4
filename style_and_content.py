@@ -114,3 +114,4 @@ class StyleLoss(nn.Module):
         gm = gram_matrix(input)
         self.loss = self.mse(gm, self.target)
         return input
+
